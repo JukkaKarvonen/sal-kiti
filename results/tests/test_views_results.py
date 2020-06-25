@@ -43,6 +43,8 @@ class ResultTestCase(TestCase):
                         'elimination_category': self.object.elimination_category.id, 'result': None,
                         'result_code': 'DNF', 'decimals': 0,
                         'position': None, 'approved': False}
+        self.competition_result_type = CompetitionResultTypeFactory.create(
+                competition_type=self.object.competition.type)
         self.url = '/api/results/'
         self.viewset = ResultViewSet
         self.model = Result
@@ -376,6 +378,42 @@ class ResultTestCase(TestCase):
         response = self._test_delete(user=self.staff_user, locked=True)
         self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
 
+    def test_result_update_with_partial_result(self):
+        self.newdata['partial'] = [{"order": 1, "type": self.competition_result_type.pk, "value": 10, "decimals": 0}]
+        response = self._test_update(user=self.superuser, data=self.newdata, locked=True)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data['partial']), 1)
+
+    def test_result_update_with_partial_change_result(self):
+        self.test_result_update_with_partial_result()
+        self.newdata['partial'] = [{"order": 1, "type": self.competition_result_type.pk, "value": 15, "decimals": 0}]
+        response = self._test_update(user=self.superuser, data=self.newdata, locked=True)
+        self.assertEqual(len(response.data['partial']), 1)
+        self.assertEqual(response.data['partial'][0]['value'], '15.0')
+
+    def test_result_update_with_partial_change_result_too_high(self):
+        self.test_result_update_with_partial_result()
+        self.newdata['partial'] = [{"order": 1, "type": self.competition_result_type.pk, "value": 550, "decimals": 0}]
+        response = self._test_update(user=self.superuser, data=self.newdata, locked=True)
+        self.assertEqual(response.data['non_field_errors'][0], "A result is too high.")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_result_update_with_partial_delete_result(self):
+        self.test_result_update_with_partial_result()
+        self.newdata['partial'] = []
+        response = self._test_update(user=self.superuser, data=self.newdata, locked=True)
+        self.assertEqual(len(response.data['partial']), 0)
+
+    def test_result_create_with_team_result(self):
+        team_members = [self.athlete.pk,
+                        AthleteFactory.create(gender="M", date_of_birth=date.today() - relativedelta(years=19)).pk,
+                        AthleteFactory.create(gender="M", date_of_birth=date.today() - relativedelta(years=20)).pk]
+        self.newdata['athlete'] = None
+        self.newdata['team_members'] = team_members
+        self.newdata['team'] = True
+        response = self._test_create(user=self.superuser, data=self.newdata, locked=False)
+        self.assertEqual(len(response.data['team_members']), 3)
+
 
 class PartialResultTestCase(TestCase):
     def setUp(self):
@@ -397,8 +435,6 @@ class PartialResultTestCase(TestCase):
         self.data = {'result': self.object.result.id, 'type': self.object.type.id, 'order': self.object.order,
                      'value': self.object.value}
         self.newdata = {'result': self.object.result.id, 'type': self.object.type.id, 'order': 2, 'value': 10.0}
-        self.data = {'result': self.object.result.id, 'type': self.object.type.id, 'order': self.object.order,
-                     'value': self.object.value}
         self.url = '/api/resultpartials/'
         self.viewset = ResultPartialViewSet
         self.model = ResultPartial
@@ -471,7 +507,7 @@ class PartialResultTestCase(TestCase):
         response = self._test_update(user=self.superuser, data=self.newdata, locked=True)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
-    def test_partial_result_update_with_staffruser(self):
+    def test_partial_result_update_with_staffuser(self):
         response = self._test_update(user=self.staff_user, data=self.newdata, locked=True)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
 
@@ -589,6 +625,22 @@ class PartialResultTestCase(TestCase):
 
     def test_partial_result_create_max_result(self):
         self.newdata['value'] = Decimal(self.competition_result_type.max_result)
+        response = self._test_create(user=self.superuser, data=self.newdata, locked=True)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
+    def test_partial_result_create_too_high_team(self):
+        self.object.result.category.team = True
+        self.object.result.category.team_size = 3
+        self.object.result.category.save()
+        self.newdata['value'] = Decimal(self.competition_result_type.max_result * 3 + 1)
+        response = self._test_create(user=self.superuser, data=self.newdata, locked=True)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_partial_result_create_max_result_team(self):
+        self.object.result.category.team = True
+        self.object.result.category.team_size = 3
+        self.object.result.category.save()
+        self.newdata['value'] = Decimal(self.competition_result_type.max_result * 3)
         response = self._test_create(user=self.superuser, data=self.newdata, locked=True)
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
 
